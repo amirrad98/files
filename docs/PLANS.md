@@ -423,7 +423,11 @@ Acceptance criteria:
      and no added permissions, network hosts or capabilities;
   2. the upgrade is applied only when
      `GET …/api/extensions/bc-bid-monitor/workspace/state?summary=1` lists no run outside
-     `succeeded`, `failed`, `cancelled`, `outcome_unknown`; no run is cancelled to make room;
+     `succeeded`, `failed`, `cancelled`, `outcome_unknown`. As first planned no run was to be
+     cancelled to make room; the user then decided otherwise for the blocking award history run
+     (2026-11-18: "if it's not progressing you can stop it and deploy the new version", and, told
+     that it was progressing and that a scheduled download was due, "Stop and deploy"). Any run
+     stopped for the upgrade is named in the deployment record with what it had saved;
   3. afterwards `GET https://zoer.k8s.overtheedgepaper.ca/api/extensions/bc-bid-monitor` reports
      version `0.41.1`, status `active`, enabled, and the schedules are as before;
   4. the live Documents page shows the Download section, and Home and Status load without an error
