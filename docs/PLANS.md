@@ -50,6 +50,7 @@ Revision 6 (2026-11-18: M4 added; later the same day M7; revision 5 was 2026-11-
 | REQ-017 | A download that Zoer has parked for a scheduled automatic retry is shown as waiting to retry, can be stopped from the Download section and from History, and after its run has ended a new download can start and the batch can be retried. | yes |
 | REQ-018 | The M4 fix is released as plugin version 0.41.1, is active on the OTE deployment, and is sent as a pull request. | yes |
 | REQ-020 | When the user turns it on, the plugin itself detects a download that has paused for the host's automatic retry, stops it and starts it again within about 30 seconds, without waiting 30 minutes and without the user doing it by hand. Bounds: it runs while the Procurement workspace is open in a browser tab, and it turns itself off after 3 restarts in a row that saved no file. | yes |
+| REQ-021 | The automatic restart (REQ-020) is released as plugin 0.41.2 and active on OTE, after rolling OTE back from 0.42.0 to 0.41.1. | yes |
 
 Failure and edge cases covered by the criteria: cancellation mid-batch (AC-002, AC-021), a later
 file failing (AC-002b), extraction error (AC-005, AC-023), nothing pending (AC-007), invalid input
@@ -569,3 +570,35 @@ waits for it. Nothing changes on OTE until a release the user asks for.
 Validation commands (repository root, `ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` =
 `../zoer-ote-attachment-transfer`): `npm run zoer:typecheck`, `npm run zoer:test`,
 `npm run zoer:test:catalog`, `npm run zoer:build`. Release and deployment are not part of M7.
+
+### M8 — Release 0.41.2 to OTE over a rollback of 0.42.0
+
+Source: user, 2026-11-18. Told that OTE runs 0.42.0 ("BC Bid attachment queue", installed 16:21Z
+from source not available here) and that replacing it removes the queue: "if there is this version
+deploy it", then, shown what 0.42.0 added: "go back one version and deploy it". Depends on: M7.
+Scope: REQ-021.
+
+What ships: the plugin built from the M8 commit (M7 plus the version line) in a clean copy without
+the other session's uncommitted M6 work, against `../zoer-ote-attachment-transfer` (`1a84ff7a`).
+0.42.0's queue (action `documents.download.queue`, its dashboard and the extraction schedule badge)
+is removed from the plugin by the user's decision; its host handlers stay on the server unused.
+
+Acceptance criteria:
+
+- AC-068: `zoer/manifest.json` reports `0.41.2` and differs from the 0.41.1 manifest only in the
+  version line; the AC-016 and AC-048 tests assert 0.41.2.
+- AC-069 (manual):
+  1. the host's rollback plan is 0.42.0 → 0.41.1 with no blockers, removing only the
+     `documents.download.queue` action and its capabilities, and is applied with its fingerprint;
+  2. the 0.41.2 package is staged; its upgrade plan is 0.41.1 → 0.41.2 with no blockers and no
+     added permissions, hosts, capabilities or action changes, and is applied with its fingerprint;
+  3. both are applied only when `GET …/workspace/state?summary=1` lists no active run; every run
+     stopped to make room is named in the record with what it had saved;
+  4. afterwards the extension reports `0.41.2`, active, enabled; configuration and schedule
+     settings are unchanged apart from failure bookkeeping of stopped runs;
+  5. the live Documents page loads the new bundle, which contains "Restart automatically when
+     paused", and Home and Status load without an error alert;
+  6. the record names the package digest, the commit, the live host commit and the retained
+     0.42.0 and 0.41.1 records (rollback path back to 0.42.0).
+- AC-070: the commits are pushed to `feat/native-database-setup` and pull request 2 of
+  `amirrad98/files` describes the release.

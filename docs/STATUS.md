@@ -10,6 +10,7 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
 | M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
 | M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, not committed, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
+| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IN PROGRESS | pre-release audit pending |
 
 ## Validation results (2026-11-16, before the completion audit)
 

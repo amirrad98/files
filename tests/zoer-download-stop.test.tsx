@@ -225,8 +225,8 @@ describe('Download all attachments', () => {
   });
 });
 
-it('AC-048: the release that carries the Stop controls is version 0.41.1', () => {
-  expect(JSON.parse(readFileSync(join(process.cwd(), 'zoer/manifest.json'), 'utf8')).version).toBe('0.41.1');
+it('AC-048 and AC-068: the Stop controls shipped in 0.41.1; the automatic restart ships as 0.41.2', () => {
+  expect(JSON.parse(readFileSync(join(process.cwd(), 'zoer/manifest.json'), 'utf8')).version).toBe('0.41.2');
 });
 it('AC-045: the README documents the paused state and where to stop it', () => {
   const readme = readFileSync(join(process.cwd(), 'zoer/README.md'), 'utf8');
