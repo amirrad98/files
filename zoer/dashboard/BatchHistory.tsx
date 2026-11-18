@@ -6,6 +6,7 @@ import { researchRetry } from './research-retry';
 import { processingRetry } from './document-processing';
 import { assertDocumentBrowserIdle, batchPause, retryTimeText } from './document-run';
 import { refreshAfterChange, useWorkspace } from './backend';
+import { stopDownloadRun, useAutoResume, withManualDownloadControl } from './download-autoresume';
 import { plainError, shortError } from './error-text';
 import { RunLinks } from './procurement/Status';
 import { StatusBadge, type Tone, Hint } from './host-ui';
@@ -34,7 +35,7 @@ export function BatchHistory({ title, kind, batches, modelId = '', tasks = [], o
   details?: (batch: any) => ReactNode;
 }) {
   const [busy, setBusy] = useState(false), [open, setOpen] = useState<Set<string>>(new Set()), [all, setAll] = useState(false);
-  const { model } = useWorkspace();
+  const { model } = useWorkspace(), auto = useAutoResume();
   const toggle = (id: string) => { const next = new Set(open); next.has(id) ? next.delete(id) : next.add(id); setOpen(next); };
   const rows = batches.filter(batch => batch.kind === kind), shown = all ? rows : rows.slice(0, PAGE);
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); await onChanged(); } catch (e) { onError(plainError((e as Error).message)); } finally { setBusy(false); } };
@@ -50,13 +51,13 @@ export function BatchHistory({ title, kind, batches, modelId = '', tasks = [], o
         <StatusBadge tone={STATUS_TONE[status] ?? 'neutral'}>{statusText(status)}</StatusBadge>{batch.updated_at && <time dateTime={batch.updated_at}>{new Date(batch.updated_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>}
         <p>{batch.completed}/{batch.total} done{Number(batch.failed) ? ` · ${batch.failed} failed` : ''}</p>
         {error && <Hint content={error}><p role="alert" className="doc-clamp pc-wrap">{plainError(error)}</p></Hint>}
-        {pause?.state === 'retry' && <p role="status">Nothing is {needsBrowser ? 'downloading' : 'running'}. Zoer retries automatically{retryTimeText(pause.retryAt) && ` at ${retryTimeText(pause.retryAt)}`}; Stop ends the wait and keeps what is saved.</p>}
+        {pause?.state === 'retry' && <p role="status">{auto.on && needsBrowser ? 'Nothing is downloading. This workspace restarts it automatically within about 30 seconds; Stop ends the wait and keeps what is saved.' : <>Nothing is {needsBrowser ? 'downloading' : 'running'}. Zoer retries automatically{retryTimeText(pause.retryAt) && ` at ${retryTimeText(pause.retryAt)}`}; Stop ends the wait and keeps what is saved.</>}</p>}
         {steps.length > 0 && <details className="doc-steps"><summary data-zoer-disclosure="">Latest steps</summary>{steps.map((task, index) => <p className="research-task" key={index}><strong>{task.phase || task.kind}</strong> · {task.name || task.record_id} · {status === 'paused' && task.status === 'running' ? 'Paused for update' : status !== 'running' && task.status === 'running' ? 'Interrupted' : statusText(task.status)}{task.error ? ` · ${shortError(task.error)}` : ''}</p>)}</details>}
       </div>
       {status === 'running' || status === 'retry_scheduled'
-        ? <Button variant="ghost" disabled={busy} onClick={() => void act(async () => { await host('cancel', { id: batch.id }); void refreshAfterChange(); })}>Stop</Button>
+        ? <Button variant="ghost" disabled={busy} onClick={() => void act(async () => { await (needsBrowser ? stopDownloadRun(batch.id) : host('cancel', { id: batch.id })); void refreshAfterChange(); })}>Stop</Button>
         // Paused for a Zoer update: it resumes on its own, so there is nothing to retry.
-        : status === 'paused' || (kind === 'download' && status === 'succeeded') ? null : <Button variant="ghost" disabled={busy || (needsBrowser && browserBusy)} onClick={() => void act(async () => { if (needsBrowser) await assertDocumentBrowserIdle(host); const started = await host('action', input.extractOnly ? processingRetry(batch) : researchRetry(batch, modelId)); void refreshAfterChange(); return started; })}>Retry</Button>}
+        : status === 'paused' || (kind === 'download' && status === 'succeeded') ? null : <Button variant="ghost" disabled={busy || (needsBrowser && browserBusy)} onClick={() => void act(async () => { const send = () => host('action', input.extractOnly ? processingRetry(batch) : researchRetry(batch, modelId)); const started = needsBrowser ? await withManualDownloadControl(async () => { await assertDocumentBrowserIdle(host); return send(); }) : await send(); void refreshAfterChange(); return started; })}>Retry</Button>}
       {details && <Button variant="ghost" aria-expanded={open.has(batch.id)} aria-controls={`run-${batch.id}`} onClick={() => toggle(batch.id)}>{open.has(batch.id) ? 'Hide results' : 'Results'}</Button>}
     </article>{details && open.has(batch.id) && <div id={`run-${batch.id}`}>{details(batch)}</div>}</div>; })}
     {rows.length > PAGE && <Button variant="ghost" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show ${rows.length - PAGE} older`}</Button>}

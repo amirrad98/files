@@ -13,7 +13,7 @@ Two repositories change:
   that checkout.
 - **Plugin**: this repository, branch `feat/native-database-setup`.
 
-Revision 6 (2026-11-18: M4 added; revision 5 was 2026-11-16): corrected after Plan Guardian findings PG-001 to PG-011 (see STATUS.md).
+Revision 6 (2026-11-18: M4 added; later the same day M7; revision 5 was 2026-11-16): corrected after Plan Guardian findings PG-001 to PG-011 (see STATUS.md).
 
 ## Contract between host and plugin
 
@@ -49,6 +49,7 @@ Revision 6 (2026-11-18: M4 added; revision 5 was 2026-11-16): corrected after Pl
 | REQ-016 | An extraction run that is cancelled or fails keeps the text already extracted and leaves the rest pending; **Retry** on a pending run starts `documents.extract.pending` again, **Retry** on a Re-extract run repeats `documents.extract` for its notices, and **Stop** cancels a running extraction. | yes |
 | REQ-017 | A download that Zoer has parked for a scheduled automatic retry is shown as waiting to retry, can be stopped from the Download section and from History, and after its run has ended a new download can start and the batch can be retried. | yes |
 | REQ-018 | The M4 fix is released as plugin version 0.41.1, is active on the OTE deployment, and is sent as a pull request. | yes |
+| REQ-020 | When the user turns it on, the plugin itself detects a download that has paused for the host's automatic retry, stops it and starts it again within about 30 seconds, without waiting 30 minutes and without the user doing it by hand. Bounds: it runs while the Procurement workspace is open in a browser tab, and it turns itself off after 3 restarts in a row that saved no file. | yes |
 
 Failure and edge cases covered by the criteria: cancellation mid-batch (AC-002, AC-021), a later
 file failing (AC-002b), extraction error (AC-005, AC-023), nothing pending (AC-007), invalid input
@@ -443,3 +444,128 @@ Acceptance criteria:
 Order: commit M4 with version 0.41.1, build and pack from the clean commit, stage, read the plan,
 upgrade when idle, enable, run the checks, record them, commit the record, push, open the pull
 request.
+
+### M7 — Plugin: restart a paused download automatically
+
+Source: user, 2026-11-18, after M5: "The plugin works but I have to run it manually, it's not
+automatically, detect and run after a pause", and, told that the host already retries once after
+30 minutes and that every pause is BC Bid's browser check: "I don't want it to be 30 minutes after
+pause, I want that automation plug in to check and if the download has paused stop it and then
+start it again". Depends on: M4 (Stop of a parked run, `batchPause`, `refreshAfterChange`).
+Scope: REQ-020. Plugin dashboard only; no host, worker or manifest change. Tests:
+`tests/zoer-download-autoresume.test.tsx`.
+
+Where it can run. The plugin worker can only save, capture, read and list (it cannot stop or start
+a run), schedules fire at whole hours at the least, and `documents.download.all` is a host action.
+The one place inside the plugin that can stop and start a run is the dashboard, so the automation
+runs while the Procurement workspace is open in a browser tab. Restarts with no tab open need a
+host change; that is an open item for the user's decision (STATUS.md), not a closed question.
+
+Observed on OTE before this milestone (2026-11-18, 10:05Z to 15:34Z): the parked download was
+stopped and resumed 31 times from outside the plugin; each resume saved about 3 to 5 files before
+BC Bid asked for its browser check again ("Manual browser verification required"). That is also the
+only live evidence that cancel-then-resume works on the host; repository tests do not cover it.
+
+Bounds the user did not state and must be told when M7 is reported: it runs only while the
+workspace is open; it is off until turned on; it turns itself off after 3 restarts in a row that
+saved no file.
+
+Identifiers: M6, REQ-019 and AC-051 to AC-054 belong to work another session has in this checkout
+(repeating failed catalog reads); this milestone starts at AC-060 to stay clear of it.
+
+Definitions.
+
+- A *parked download* is a run with action `documents.download.all` and status `retry_scheduled`
+  whose batch (the catalog batch whose id is the run id) has status `paused` and is classified
+  `retry` by `batchPause` from its scheduled-recovery message. Nothing else is ever stopped: not a
+  `documents.download` or `documents.download.missing` run in any status, and not a
+  `retry_scheduled` run whose batch is not `paused` (the host uses that status too while a plugin
+  upgrade interrupts a download).
+- A *cycle* is one pass of `resumeParkedDownload` (`download-autoresume.ts`). It reads, in this
+  order, the batch list (`catalog.state`), the catalog-wide number of saved files (`downloaded` of
+  `DOCUMENT_STATS_SQL`) and last the run list (`state`), so that the run list is the newest reading
+  when it acts.
+- The *resume request* is action `documents.download.all`, whatever the number of notices, with
+  input `{ recordIds: <the batch's>, force: false, resumeRunId: <the batch id> }`. (`researchRetry`
+  is not used: it picks `documents.download` for 50 notices or fewer, which the host never parks.)
+
+Acceptance criteria:
+
+- AC-060 (nothing to do): with no parked download the cycle calls neither `cancel` nor `action`
+  and reports `idle`. This covers: no active download run; a transferring, queued,
+  approval-waiting or update-waiting `documents.download.all` run; a `retry_scheduled`
+  `documents.download.all` run whose batch is `running`, `stopped`, missing from the batch list, or
+  `paused` without the scheduled-recovery message;
+  and a `retry_scheduled` `documents.download.missing` or `documents.download` run.
+- AC-061 (restart): with exactly one parked download and no other active download run (of any of
+  the three download actions) the cycle calls `cancel` with the parked run's id, reads the run
+  list again, and, if no download run is active then, calls `action` with the resume request. It
+  reports `restarted` with the new run's id. The request is `documents.download.all` both for a
+  batch of 50 notices or fewer and for a larger one.
+- AC-062 (other download runs): if another download run is active beside the parked one, in either
+  order in the run list, the cycle stops and starts nothing and reports `skipped`. If, after its
+  own `cancel`, the second run-list reading shows an active download run (another browser or
+  person restarted it first), it starts nothing and reports `skipped`.
+- AC-063 (failures):
+  1. A failed read of the batch list, the saved-file count or the run list makes the cycle a
+     no-op: neither `cancel` nor `action`, outcome `unreadable` with the error. An unreadable
+     count is never counted as progress or as lack of it. The watcher stays on.
+  2. A refused `cancel` starts nothing; outcome `cancel_refused` with the error. The watcher stays
+     on and the next cycle tries again.
+  3. A failed second run-list reading after the cancel starts nothing; outcome `start_refused`.
+  4. A refused `action` after the cancel: outcome `start_refused` with the error. For 3 and 4 the
+     watcher turns itself off, so a refused start is never repeated in a loop, and its message says
+     the download is stopped and that Retry in History resumes it.
+- AC-064 (no-progress guard): the watcher keeps, in memory for the page load, the saved-file count
+  at its last restart and the number of restarts in a row that were followed by a parked download
+  with no higher count. When that number reaches 3 the cycle stops and starts nothing (the
+  download stays parked, so the host's own retry still applies), reports `stalled`, and the
+  watcher turns itself off with a message that BC Bid's browser check needs a person. A restart
+  after which the count rose resets the number. Turning the option on again starts from zero. The
+  count is catalog-wide: a file saved by any download counts as progress, and notices that advance
+  without a saved file do not.
+- AC-065 (watcher):
+  1. Off by default. Turned on, it runs a cycle every 30 seconds; a cycle is not skipped because
+     the tab is hidden; two cycles never overlap; it stops when turned off and when the workspace
+     closes.
+  2. It is started by the workspace (`startWorkspace`), so it runs on every Procurement page, not
+     only on Documents.
+  3. The choice is kept per browser in `localStorage`; a browser that refuses storage keeps it for
+     the page only. Turning itself off (AC-063, AC-064) writes the stored choice off, and other
+     tabs of that browser follow a stored change (`storage` event) and re-read the stored choice
+     before each cycle.
+  4. Where the browser has Web Locks and allows them (a sandboxed frame has the interface but is
+     refused; such a tab checks by itself), one tab holds the lock for as long as its option is on and
+     only that tab runs cycles; another tab whose option is on takes over when the holder closes or,
+     in a browser that refuses storage, when the holder turns its own option off.
+  5. On a read-only host (`collection` false) it cannot be turned on and never runs; no cycle
+     runs before the host has answered what it allows.
+  6. A cycle and a manual download control in the same tab do not interleave: Download all,
+     Stop download, History Stop and Retry, Download selected and a per-file retry wait for a
+     cycle in flight, and no cycle starts while one of them is in flight. A download the user
+     stops by hand is therefore not restarted: it is no longer parked. If the awaited cycle has
+     just restarted the download, a Stop also stops the run that cycle started.
+- AC-066 (interface): the Download section shows a checkbox "Restart automatically when paused"
+  with a sentence saying it works while this workspace is open in a browser tab. While on, a
+  status line gives the number of automatic restarts and the time of the last one, or says that
+  another tab of this browser is handling it; after it turned itself off, the reason. While it is
+  on and a download is parked, the Download section's paused line and the History line say that
+  this workspace restarts it within about 30 seconds, not when Zoer retries. After a restart the
+  run list and the batch list reload.
+- AC-067: `zoer/README.md` describes the option; that it needs the workspace open in a tab, that a
+  browser may delay or suspend a background tab, and that a closed tab or a sleeping computer
+  restarts nothing (the host's 30-minute retry still applies then); the 3-restart guard and that
+  its count is catalog-wide; and what is never restarted: a download that ended "Waiting for you",
+  "Failed" or "Stopped", an update pause, a start waiting for approval, and "Keep documents
+  current" or selected-notice downloads; and the known limits below.
+
+Known limits, stated in the README: if the workspace closes between the cancel and the start, the
+download stays stopped until Retry in History; a manual Stop from another tab, browser or person in
+the instant between the cycle's run-list reading and its cancel can be followed by one automatic
+restart; two browsers with the option on can both start a resume in the same instant; the second waits
+behind the first, and while two download runs are active nothing is restarted automatically; if the action is configured to need approval, the automatic start
+waits for it. Nothing changes on OTE until a release the user asks for.
+
+Validation commands (repository root, `ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` =
+`../zoer-ote-attachment-transfer`): `npm run zoer:typecheck`, `npm run zoer:test`,
+`npm run zoer:test:catalog`, `npm run zoer:build`. Release and deployment are not part of M7.

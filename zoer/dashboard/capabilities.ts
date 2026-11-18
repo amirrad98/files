@@ -55,5 +55,9 @@ export function loadCapabilities(request: (method: string) => Promise<unknown> =
 export function resetCapabilities() { epoch++; loading = undefined; current = ZOER_CAPABILITIES; ready = false; guardHost(undefined); emit(); }
 /** Current capabilities for non-React code (actions, guards). */
 export const capabilities = () => current;
+/** Whether the host has answered. Until then `capabilities()` is the Zoer fallback, not what this host allows. */
+export const capabilitiesReady = () => ready;
+/** For non-React code that must follow a change of host or of its answer. */
+export const subscribeCapabilities = subscribe;
 export function useCapabilities() { return useSyncExternalStore(subscribe, () => current); }
 export function useCapabilitiesReady() { return useSyncExternalStore(subscribe, () => ready); }

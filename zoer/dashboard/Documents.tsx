@@ -14,6 +14,7 @@ import { useCapabilities } from './capabilities';
 import { useDocumentBrowsers } from './use-document-browsers';
 import { activeDownloadBatch, assertDocumentBrowserIdle } from './document-run';
 import { refreshAfterChange, useWorkspace } from './backend';
+import { withManualDownloadControl } from './download-autoresume';
 import { splitDocumentBatches } from './document-processing';
 import { DocumentProcessing } from './DocumentProcessing';
 
@@ -38,8 +39,10 @@ export function Documents() {
   const download = async () => {
     setBusy(true); setError(''); setMessage('');
     try {
-      await assertDocumentBrowserIdle(host);
-      await host('action', { actionId: 'documents.download', input: { recordIds: [...selection], force: false } });
+      await withManualDownloadControl(async () => {
+        await assertDocumentBrowserIdle(host);
+        await host('action', { actionId: 'documents.download', input: { recordIds: [...selection], force: false } });
+      });
       setMessage(`Download started for ${selection.size} ${selection.size === 1 ? 'opportunity' : 'opportunities'}.`);
       // The run list decides what can be stopped; reload it with the batch list.
       await Promise.all([refresh(), refreshAfterChange()]);

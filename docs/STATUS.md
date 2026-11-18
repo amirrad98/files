@@ -9,6 +9,7 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M3 — Deployment to OTE | DEPLOYED: live checks passed (see deployment record) | readiness not audited; no completion audit; no final audit |
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
 | M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
+| M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, not committed, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -339,3 +340,86 @@ criterion is manual. Non-blocking items carried forward:
 3. Pull request 2 is open; merging it is the user's decision.
 4. Still open before a final project audit, unchanged by M4 and M5: the four host test failures,
    the skipped RDN test, and M3 without a completion audit.
+
+## M7 — restart a paused download automatically (2026-11-18)
+
+Open item for the user's decision: restarts while no browser tab has the workspace open need a
+host change (the plugin worker cannot stop or start a run, and schedules fire hourly at the
+least). M7 does not provide them and does not close the question.
+
+To be told to the user when M7 is reported: the option runs only while the workspace is open in a
+browser tab; it is off until turned on; it turns itself off after 3 restarts in a row that saved
+no file.
+
+### Audit 12 — plan addition and readiness of M7 — 2026-11-18 — FAIL
+
+| Finding | Summary | Correction in PLANS.md |
+|---|---|---|
+| PG-M7-01 | "Paused" was only run status `retry_scheduled`, which the host also uses while a plugin upgrade interrupts a download and for all three download actions; behaviour with two active download runs was undefined. | A parked download is defined by action, run status, batch status and `batchPause`; AC-060 lists what is left alone; AC-062 covers other active download runs. |
+| PG-M7-02 | `researchRetry` resumes 50 notices or fewer as `documents.download`, which the host never parks again. | The resume request is always `documents.download.all` (AC-061). |
+| PG-M7-03 | Undefined: guard state and re-arm, failed reads, repeated cancel refusal, cancel of an already ended run, interleaving with manual controls, workspace closing mid-cycle, which pages, states never restarted, the catalog-wide measure. | AC-063 to AC-065 give each one outcome; the rest are known limits and README items (AC-067). |
+| PG-M7-04 | REQ-020 lacked its bounds; "also while the tab is hidden" overstated; unattended restarts were dismissed without a record. | Bounds are in the REQ-020 row; AC-065 says a cycle is not skipped because the tab is hidden and the README states what a browser may do; the open item above. |
+
+### Audit 13 — re-audit of the M7 plan and readiness — 2026-11-18 — PASS
+
+PG-M7-01 to PG-M7-04 confirmed closed; implementation may begin. Five wording items were applied
+to PLANS.md afterwards (who takes over the Web Lock, the two-browser limit, the README criterion
+covering the known limits, the paused-without-message case in AC-060, no cycle before the host
+has answered what it allows). Completion needs its own audit.
+
+### M7 implementation (2026-11-18)
+
+| Command (`ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` = `../zoer-ote-attachment-transfer`) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 88 files passed, 1 skipped; 1192 tests passed, 9 skipped (`tests/zoer-download-autoresume.test.tsx`: 28 passed). The run includes the other session's uncommitted M6 files. |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` and `dist/zoer-native`, both containing the option; the known `PdfPreview` warning |
+
+Live observation while M7 was written, read-only (not a test of M7, which is not deployed): the
+parked download kept being stopped and resumed from outside the plugin (35 runs since 10:05Z by
+16:08Z). The run started at 16:07:02Z was parked again at 16:08:22Z with the batch still at 220 of
+492, so recent restarts save little or nothing; the 3-restart guard exists for this case.
+
+### Audit 14 — completion audit of M7 — 2026-11-18 — FAIL
+
+The check itself (trigger, read order, second run-list reading, failure outcomes, guard) was found
+correct and the four commands passed. Three defects in the watcher and its wiring:
+
+| Finding | Summary | Correction |
+|---|---|---|
+| PG-M7-05 (high) | In the host's sandboxed dashboard frame Web Locks exist but refuse; the refusal was swallowed, so the option never ran and said another tab was handling it. | A lock request refused for any reason but this tab's own abort makes the tab check by itself (`lead`); AC-065.4 says "has Web Locks and allows them"; watcher and interface tests with a refusing lock and refusing storage. |
+| PG-M7-06 (medium) | A Stop pressed while a check was in flight cancelled the already stopped run and left the run the check had just started. Only the two Stop buttons were tested for going through the manual control. | `withManualDownloadControl` hands the control the awaited check's outcome; `stopDownloadRun` (both Stop buttons) also stops the run that check started; AC-065.6 says so. Tests: Stop download and History Stop during a restarting check end with no active run; Download all, History Retry, Download selected and a per-file retry are each shown to wait for a check in flight. |
+| PG-M7-07 (low) | Storage that reads but refuses to write turned the option off again at the next check. | A failed write or read makes the choice page-only and the tab stops following storage until a write succeeds; test with only `setItem` refusing. |
+
+Non-blocking items acted on: the AC-065.2 test runs the real `startWorkspace`; a check from before
+a turn-off or a close and reopen reports nothing and stops nothing once its reads return
+(`session`, `stillWanted`); the checkbox is disabled until the host has answered and is described
+by its sentence (`aria-describedby`); a test turns a tab off while its lock request is queued; the
+README notes that Retry in History resumes 50 notices or fewer as a selected-notice download.
+Left as they are: each check reads the full file statistics and the batch list (a read that times
+out makes that check `unreadable`, and the next one tries again); the paused lines say "This
+workspace restarts it" also when a check skips because another download is active.
+
+| Command after the corrections (`ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` = `../zoer-ote-attachment-transfer`) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 88 files passed, 1 skipped; 1201 tests passed, 9 skipped (`tests/zoer-download-autoresume.test.tsx`: 37 passed) |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` and `dist/zoer-native` |
+
+### Audit 15 — completion re-audit of M7 — 2026-11-18 — PASS
+
+PG-M7-05 to PG-M7-07 confirmed closed; the auditor reverted each correction in scratch copies and
+the new tests failed every time. REQ-020 is VERIFIED by repository tests; the live
+cancel-then-resume is evidenced only by the external cycles observed on OTE. Non-blocking items
+carried forward:
+
+1. A Stop pressed in the moment between a completed automatic restart and the page's reload of
+   the run list names the run the check already stopped, so the new run continues; a second Stop
+   names the right one.
+2. No repository test for `stopDownloadRun` when the host does not name the new run (verified by
+   the auditor's probe).
+3. A stale check refused its start after its stop reports nothing; a restart made by a stale check
+   is not judged by the new guard.
+4. Open item for the user: restarts while no tab has the workspace open need a host change.

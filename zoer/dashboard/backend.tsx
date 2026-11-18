@@ -12,6 +12,7 @@ import { SAVED_BC_BID_BUYERS_QUERY } from './buyer-query';
 import { readWorkspaceMetadata } from './workspace-bootstrap';
 import { bcLastCollection } from './procurement/status-data';
 import { plainError } from './error-text';
+import { startAutoResume } from './download-autoresume';
 export { readAll } from './queries';
 /** Native workspaces never set up storage on open; the user starts it from the setup card. */
 export type DatabaseSetup = {
@@ -131,6 +132,8 @@ export async function refreshAfterChange() {
 
 export function startWorkspace() {
   void refresh();
+  // Restarting a paused download works on every page of the workspace, for as long as it is open.
+  const stopAutoResume = startAutoResume(() => { void refreshAfterChange(); void queryClient.invalidateQueries({ queryKey: ['procurement', 'catalog-state'] }); });
   let lastPoll = Date.now();
   const timer = setInterval(() => {
     if (document.hidden) return;
@@ -142,7 +145,7 @@ export function startWorkspace() {
   const visible = () => { if (!document.hidden) { lastPoll = Date.now(); void refresh(); } };
   document.addEventListener('visibilitychange', visible);
   return () => {
-    clearInterval(timer); document.removeEventListener('visibilitychange', visible);
+    clearInterval(timer); document.removeEventListener('visibilitychange', visible); stopAutoResume();
     generation++; pending = undefined; snapshot = {}; databaseRevision = -1; metadataRevision = -1;
     savedEntries = []; fullCheckpoint = null; targetedCheckpoint = null; loadedHistory.clear(); migrationStarted = false; setupRunId = null;
     // The native loader creates a distinct module on auth/environment/version
