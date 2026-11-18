@@ -10,7 +10,7 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
 | M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
 | M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, committed as `02b6c05`, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
-| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IN PROGRESS | audit 16 (plan and readiness): FAIL (PG-M8-01 to PG-M8-03, docs only), corrected; re-audit pending |
+| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IMPLEMENTED: live since 17:20Z (see "M8 deployment record") | audit 16: FAIL (docs only), corrected; audit 17 (readiness): PASS; completion audit pending |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -443,3 +443,44 @@ copy (dirty false).
 | PG-M8-01: AC-069.1 did not list the exact rollback plan (second removed capability, required review). | AC-069.1 lists every field; the review is the user's decision. |
 | PG-M8-02: no rule for an active run, nor for schedules firing between the two applies. | AC-069.3: active runs are stopped and recorded; runs re-read before each apply; back-to-back applies. |
 | PG-M8-03: "unchanged" had no baseline. | AC-069.0 saves the baseline; AC-069.4 lists the fields allowed to differ. |
+
+### M8 deployment record (2026-11-18)
+
+Procurement 0.41.2 went live on OTE at 17:20:21Z (10:20 Vancouver).
+
+| Item | Value |
+|---|---|
+| Commit | `6b7419093e61d24c9b0658bc242703516d20f7e0` (M7 `02b6c05` plus the version line), built in a clean copy, `source.json` dirty false, UI source `1a84ff7a` |
+| Package | `dist/procurement-0.41.2.zip`, 7 files, digest `1bfeb5d8b8023d2c00200521bab565e58b3f666b9cbf3ecebdebca54c224da95`, file SHA-256 `3b033cc6f58a76a7cba1a132499bd7510b013da0cccbc4fc8ec0efd63100835a`; host package conformance passed |
+| Staged | record `0a37a88e-269d-4804-8af7-7bd8e5eb8695` at 17:07:51Z, same digest |
+| Live host | commit `88a4a7ec9e9b0c3747e07aef1e424cbe450935cf` (dirty) |
+
+Sequence (AC-069):
+
+0. Baseline of the extension and the schedules saved at 17:12:01Z.
+1. Run stopped (AC-069.3): `workflow_run_da1cc93f-411c-4b7c-a2aa-436cbd7edf87`,
+   `documents.download.missing` (hourly "Keep documents current"), running since 17:05:00Z with
+   7 of 500 notices done at 17:06Z; cancelled 17:12:05Z, host status `outcome_unknown`. Saved files
+   are kept.
+2. Rollback 0.42.0 → 0.41.1 applied 17:12:13Z with the plan of AC-069.1 matched field for field
+   (fingerprint `0549a262…8348`). The rolled-back plugin is installed disabled, so its workspace
+   (and run list) answered 404 until the upgrade; the waiting script timed out on that, and the
+   upgrade was applied by hand at 17:20:20Z, the host itself refusing upgrades while a run is active.
+3. Upgrade 0.41.1 → 0.41.2: plan with no blockers and no added or removed permissions, hosts,
+   capabilities or action changes, no review required (fingerprint `5036c0a9…00de`); applied
+   17:20:20Z; plugin enabled 17:20:21Z. No run active afterwards.
+
+Checks after the release:
+
+| Check | Result |
+|---|---|
+| Extension | `0.41.2`, active, enabled, no error, digest `1bfeb5d8…da95` |
+| Configuration, permissions | equal to the baseline |
+| Schedules | 11 before and after, same actions and browsers; only `documents.download.missing` differs, in `checkedRunId`, `consecutiveFailures`, `lastStatus`, `retryAt` and `state` (the stopped run), all allowed by AC-069.4 |
+| Documents page | "Download all attachments" with Download all enabled; the checkbox "Restart automatically when paused" present, enabled, unchecked, described by "Works while this workspace is open in a browser tab."; no alert |
+| Home, Status | load with their headings, no alert; one 404 console line from the period the plugin was disabled |
+| Retained records | 0.42.0 `173d9bd8-4680-4e22-9d66-199225bbeb7c` (digest `e2172766…`) `superseded`, "Rolled back to 0.41.1": 0.42.0 can be restored as an upgrade from 0.41.2. 0.41.1 `aca0ce3e-edfa-4d37-81c0-ae032979c035` `superseded` by 0.41.2 |
+
+Removed with 0.42.0 by the user's decision: the `documents.download.queue` action and its dashboard;
+its host handlers remain unused. Not verified live: an automatic restart itself (no download was
+parked after the release, and the option is off until a user ticks it).
