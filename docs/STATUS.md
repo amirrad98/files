@@ -9,8 +9,8 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M3 — Deployment to OTE | DEPLOYED: live checks passed (see deployment record) | readiness not audited; no completion audit; no final audit |
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
 | M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
-| M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, not committed, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
-| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IN PROGRESS | pre-release audit pending |
+| M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, committed as `02b6c05`, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
+| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IN PROGRESS | audit 16 (plan and readiness): FAIL (PG-M8-01 to PG-M8-03, docs only), corrected; re-audit pending |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -424,3 +424,22 @@ carried forward:
 3. A stale check refused its start after its stop reports nothing; a restart made by a stale check
    is not judged by the new guard.
 4. Open item for the user: restarts while no tab has the workspace open need a host change.
+
+## M8 — release 0.41.2 over a rollback of 0.42.0 (2026-11-18)
+
+Observed before the release: OTE runs 0.42.0 (record `173d9bd8-…`, installed 16:21:42Z by someone
+else; source not available). Its queue run `workflow_run_2e9e56bd-…` was cancelled at 17:04:46Z by
+an unknown actor; a scheduled `documents.download.missing` run (`workflow_run_da1cc93f-…`) started
+at 17:05:00Z. The 0.41.2 package was staged at 17:07:51Z, before the readiness audit (staging does
+not activate anything): record `0a37a88e-269d-4804-8af7-7bd8e5eb8695`, package digest
+`1bfeb5d8b8023d2c00200521bab565e58b3f666b9cbf3ecebdebca54c224da95`, file SHA-256
+`3b033cc6f58a76a7cba1a132499bd7510b013da0cccbc4fc8ec0efd63100835a`, built from `6b74190` in a clean
+copy (dirty false).
+
+### Audit 16 — plan addition and readiness of M8 — 2026-11-18 — FAIL (docs only)
+
+| Finding | Correction |
+|---|---|
+| PG-M8-01: AC-069.1 did not list the exact rollback plan (second removed capability, required review). | AC-069.1 lists every field; the review is the user's decision. |
+| PG-M8-02: no rule for an active run, nor for schedules firing between the two applies. | AC-069.3: active runs are stopped and recorded; runs re-read before each apply; back-to-back applies. |
+| PG-M8-03: "unchanged" had no baseline. | AC-069.0 saves the baseline; AC-069.4 lists the fields allowed to differ. |

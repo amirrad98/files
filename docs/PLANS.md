@@ -588,17 +588,32 @@ Acceptance criteria:
 - AC-068: `zoer/manifest.json` reports `0.41.2` and differs from the 0.41.1 manifest only in the
   version line; the AC-016 and AC-048 tests assert 0.41.2.
 - AC-069 (manual):
-  1. the host's rollback plan is 0.42.0 → 0.41.1 with no blockers, removing only the
-     `documents.download.queue` action and its capabilities, and is applied with its fingerprint;
-  2. the 0.41.2 package is staged; its upgrade plan is 0.41.1 → 0.41.2 with no blockers and no
-     added permissions, hosts, capabilities or action changes, and is applied with its fingerprint;
-  3. both are applied only when `GET …/workspace/state?summary=1` lists no active run; every run
-     stopped to make room is named in the record with what it had saved;
-  4. afterwards the extension reports `0.41.2`, active, enabled; configuration and schedule
-     settings are unchanged apart from failure bookkeeping of stopped runs;
-  5. the live Documents page loads the new bundle, which contains "Restart automatically when
-     paused", and Home and Status load without an error alert;
-  6. the record names the package digest, the commit, the live host commit and the retained
-     0.42.0 and 0.41.1 records (rollback path back to 0.42.0).
+  0. Before the rollback, `GET …/api/extensions/bc-bid-monitor` and `GET …/schedules` are saved
+     as the baseline.
+  1. The rollback plan read just before applying it is exactly: 0.42.0 → 0.41.1, direction
+     `downgrade`, no blockers; removed capabilities exactly
+     `resumable:documents.download.queue:57ce85abc9ed` and `worker:timeout:4500000`; one action
+     change, `documents.download.queue` removed; no added or removed permissions or hosts; and
+     `requiresReview: true`, the review being the user's recorded decision above. It is applied
+     with the fingerprint the host returns then. If any field differs, the release stops.
+  2. The 0.41.2 package is staged; its upgrade plan, read just before applying it, is 0.41.1 →
+     0.41.2 with no blockers and no added or removed permissions, hosts, capabilities or action
+     changes, and is applied with its fingerprint. Otherwise the release stops at 0.41.1.
+  3. Runs: under the same "deploy it" authority as M5, a run that is active when the release starts
+     is stopped, not waited for; each is recorded with its id, action and what it had saved.
+     Runs are read again just before each apply; the rollback and the upgrade run back to back, and
+     a run that starts in between is stopped and recorded the same way.
+  4. Afterwards the extension reports `0.41.2`, active, enabled, and its configuration equals the
+     baseline. The schedules equal the baseline field by field, except `consecutiveFailures`,
+     `lastRunId`, `lastStatus`, `nextRunAt`, `retryAt`, `state`, `error` and `checkedRunId` of
+     schedules whose runs were stopped.
+  5. The live Documents page loads the new bundle, which contains "Restart automatically when
+     paused", and Home and Status load without an error alert.
+  6. The record names the package digest and file SHA-256, the commit, the staged record and when
+     it was staged, the live host commit, and the retained records: 0.42.0
+     (`173d9bd8-4680-4e22-9d66-199225bbeb7c`, digest `e2172766…`) still present after both applies,
+     from which 0.42.0 can be restored as an upgrade from 0.41.2.
+  Accepted limitation, by the user's decision: data written by 0.42.0's queue is not examined (its
+  source is not available); the host reported no blockers.
 - AC-070: the commits are pushed to `feat/native-database-setup` and pull request 2 of
   `amirrad98/files` describes the release.
