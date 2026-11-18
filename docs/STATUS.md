@@ -8,7 +8,7 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M2 — Plugin: Processing tab and pending state | VERIFIED (plugin commit `aeb57bf`, not pushed) | readiness: PASS (audit 4); completion audit 6: PASS |
 | M3 — Deployment to OTE | DEPLOYED: live checks passed (see deployment record) | readiness not audited; no completion audit; no final audit |
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
-| M5 — Release 0.41.1, deployment to OTE and pull request | IMPLEMENTED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; completion audit pending |
+| M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -280,7 +280,7 @@ Procurement 0.41.1 went live on OTE at 09:18:07Z on 2026-11-18 (01:18 Vancouver)
 | Plugin commit | `c70d0d1887ec9bb54a6281680bb3e9009e2e0781` (clean tree; `source.json` records it, not dirty) |
 | Host UI checkout for the build | `../zoer-ote-attachment-transfer`, `1a84ff7a` (as for the live 0.41.0 package) |
 | Package | `dist/procurement-0.41.1.zip`, 7 files, 7,873,435 bytes, package digest `3046075f8ecdad9a8e160f6cd209360a9ca86348a9b83ba4eba4fa02cba3b829`, file SHA-256 `7f3264da05d0420026835e93c0510e6b463cc10c938a263bae3b475ed2fa8f5f`; host package conformance passed |
-| Difference from the 0.41.0 package | manifest: the version line only; `native/style.css` identical; `worker/worker.js` differs only by the bundled model's added `workflowRuns` field; dashboard and native bundles carry M4 and upstream `61dd5fb` |
+| Difference from the 0.41.0 package | manifest: the version line only; `README.md` (the M4 paragraph) and `source.json` (the commit) differ; `native/style.css` identical; `worker/worker.js` differs only by the bundled model's added `workflowRuns` field; dashboard and native bundles carry M4 and upstream `61dd5fb` |
 | Staged record | `aca0ce3e-edfa-4d37-81c0-ae032979c035`, label "Procurement 0.41.1 stop paused downloads · c70d0d1", staged 08:50:52Z; the host reported the same digest |
 | Upgrade plan | 0.41.0 → 0.41.1, direction upgrade, no blockers, no added or removed permissions, network hosts or capabilities, no action changes, no review required; fingerprint `cb25731f0a257145477503a4a8a0cebbdcc619d7ca44b4cd1e545f3f1154c033` |
 | Live host at the time | commit `88a4a7ec9e9b0c3747e07aef1e424cbe450935cf` (dirty), newer than any local checkout |
@@ -293,13 +293,15 @@ Runs stopped for the upgrade (AC-049, check 2). The host refuses an upgrade whil
   told so and answered "Stop and deploy". Cancelled at 09:17:04Z; the host recorded
   `outcome_unknown`. Its checkpoint is kept: version 2, 140 of 147 ranges complete, page 27,
   57,879 → 58,285 rows processed, unchanged for 45 seconds after the stop and before the upgrade.
-  The daily schedule is next due 2026-11-19T08:30Z and a resume rechecks only the unfinished range.
+  The daily schedule fires next at its retry time, 2026-11-19T09:17:28Z (the host does not fire
+  before `retryAt`), and a resume rechecks only the unfinished range.
 - `documents.download.missing` `workflow_run_9b94cbb9-…` (hourly schedule, created 09:08:27Z) was
   `pending` behind the award run ("Waiting for another BC Bid job to finish") and had done no work.
   It would have started the moment the award run released the browser and blocked the upgrade for
   an unknown time, so it was cancelled first, at 09:17:03Z (`cancelled`). The user had been warned
   that this scheduled download could prevent an idle window; stopping it was not named in the
-  user's instruction and was the implementer's decision. Its schedule is next due 10:08Z.
+  user's instruction and was the implementer's decision. Its schedule fires next at its retry time,
+  10:17:28Z.
 
 Sequence: no active run from 09:17:15Z; the plan was read again and matched the reviewed
 fingerprint; upgrade applied 09:18:06Z ("0.41.0 -> 0.41.1; installed disabled"); plugin enabled
@@ -320,3 +322,20 @@ after the upgrade, so the new Stop controls were not exercised against the live 
 
 Pull request: https://github.com/amirrad98/files/pull/2 (`feat/native-database-setup` → `main` of
 `amirrad98/files`), opened with the M4 commit; this record is pushed to the same branch.
+
+### Audit 11 — completion audit of M5 — 2026-11-18 — PASS
+
+AC-048, AC-049 (five checks) and AC-050 pass; REQ-018 is VERIFIED. The auditor confirmed by
+read-only requests that the installed package is byte-identical to the build from `c70d0d1`
+(tree digest recomputed locally), that 0.41.1 is active and enabled, that the 0.41.0 record is
+retained, and that both stopped runs and the schedule counters are as recorded. The page checks
+(Documents, Home, Status) rest on the implementer's browser observations, accepted because the
+criterion is manual. Non-blocking items carried forward:
+
+1. The Stop controls have not been exercised against the live host; no download was parked after
+   the upgrade.
+2. `awards.history` shows 8 consecutive failures (7 before the stop) and `scrape.full` 6, waiting
+   for a browser check; both conditions predate this release.
+3. Pull request 2 is open; merging it is the user's decision.
+4. Still open before a final project audit, unchanged by M4 and M5: the four host test failures,
+   the skipped RDN test, and M3 without a completion audit.
