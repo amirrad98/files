@@ -10,7 +10,7 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
 | M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
 | M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, committed as `02b6c05`, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
-| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IMPLEMENTED: live since 17:20Z (see "M8 deployment record") | audit 16: FAIL (docs only), corrected; audit 17 (readiness): PASS; completion audit pending |
+| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | IMPLEMENTED: live since 17:20Z (see "M8 deployment record") | audit 16: FAIL (docs only), corrected; audit 17 (readiness): PASS; audit 18 (completion): FAIL (record only), corrected; re-audit pending |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -464,11 +464,19 @@ Sequence (AC-069):
    are kept.
 2. Rollback 0.42.0 → 0.41.1 applied 17:12:13Z with the plan of AC-069.1 matched field for field
    (fingerprint `0549a262…8348`). The rolled-back plugin is installed disabled, so its workspace
-   (and run list) answered 404 until the upgrade; the waiting script timed out on that, and the
-   upgrade was applied by hand at 17:20:20Z, the host itself refusing upgrades while a run is active.
+   and run list answered 404 from 17:12:14Z to 17:20:05Z; the waiting script timed out on that.
+   Deviation from AC-069.3: the run read required just before the upgrade was not possible, and the
+   upgrade came 8 minutes after the rollback, not back to back. Evidence that no run was active:
+   the plugin was disabled for that whole interval, and the run list read later has no run created
+   between 17:12:03Z (the stopped run) and 17:23:19Z (a scheduled `documents.extract.pending` run
+   after the release). The upgrade was applied by hand at 17:20:20Z. (That the host refuses an
+   upgrade while a run is active is stated in the 0.41.0 runbook,
+   `zoer/docs/2026-11-16-deferred-extraction-deploy.md`; it was not observed in this release.)
 3. Upgrade 0.41.1 → 0.41.2: plan with no blockers and no added or removed permissions, hosts,
    capabilities or action changes, no review required (fingerprint `5036c0a9…00de`); applied
-   17:20:20Z; plugin enabled 17:20:21Z. No run active afterwards.
+   17:20:20Z. No run active afterwards (17:20:22Z).
+4. Enable: the upgrade installs the plugin disabled; it was enabled by hand at 17:20:21Z, which
+   restores the baseline `enabled: true`.
 
 Checks after the release:
 
@@ -484,3 +492,12 @@ Checks after the release:
 Removed with 0.42.0 by the user's decision: the `documents.download.queue` action and its dashboard;
 its host handlers remain unused. Not verified live: an automatic restart itself (no download was
 parked after the release, and the option is off until a user ticks it).
+
+### Audit 18 — completion audit of M8 — 2026-11-18 — FAIL (record only)
+
+| Finding | Correction |
+|---|---|
+| PG-M8-04: the record did not say that the run read before the upgrade was skipped, that the applies were 8 minutes apart, or what evidence replaces the read. | Step 2 of the deployment record states the deviation and the evidence; the enable is its own step. |
+
+Noted: `documents.extract.pending` ran normally at 17:23:19Z after the release, so its schedule
+now differs from the 17:20 after-copy as a schedule does after any run.
