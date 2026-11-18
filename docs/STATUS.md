@@ -7,6 +7,10 @@ Plan: [PLANS.md](PLANS.md) · Traceability: [TRACEABILITY.md](TRACEABILITY.md)
 | M1 — Host: save first, extract later | VERIFIED (host commit `1a84ff7a`, branch `feat/deferred-document-extraction`, not pushed) | readiness: PASS (audit 4); completion audit 5: FAIL (PG-011), corrected; completion audit 6: PASS |
 | M2 — Plugin: Processing tab and pending state | VERIFIED (plugin commit `aeb57bf`, not pushed) | readiness: PASS (audit 4); completion audit 6: PASS |
 | M3 — Deployment to OTE | DEPLOYED: live checks passed (see deployment record) | readiness not audited; no completion audit; no final audit |
+| M4 — Plugin: stop a download that waits for its automatic retry | VERIFIED (REQ-017) | audit 7: FAIL (PG-M4-01, PG-M4-02), corrected; audit 8: PASS |
+| M5 — Release 0.41.1, deployment to OTE and pull request | VERIFIED: deployed and live checks passed (see "M5 deployment record"); pull request 2 open | audit 9: FAIL (records only), corrected; audit 10 (pre-commit, readiness): PASS; audit 11 (completion): PASS |
+| M7 — Plugin: restart a paused download automatically | VERIFIED by repository tests (working tree on `4f28d7f`, committed as `02b6c05`, not released; nothing changes on OTE until a release the user asks for) | audit 12 (plan and readiness): FAIL (PG-M7-01 to PG-M7-04), plan corrected; audit 13: PASS (implementation may begin); audit 14 (completion): FAIL (PG-M7-05 to PG-M7-07), corrected; audit 15: PASS |
+| M8 — Release 0.41.2 to OTE over a rollback of 0.42.0 | VERIFIED: live since 17:20Z (see "M8 deployment record") | audit 16: FAIL (docs only), corrected; audit 17 (readiness): PASS; audit 18 (completion): FAIL (record only), corrected; audit 19: PASS |
 
 ## Validation results (2026-11-16, before the completion audit)
 
@@ -184,3 +188,320 @@ host still reports commit `4f7eb40a` and the installed plugin is 0.40.1.
 
 Also open before the final audit: the four pre-existing host test failures and the RDN test skipped
 on this machine need CI/Linux evidence or the user's recorded acceptance.
+
+## M4 — stop a download that waits for its automatic retry (2026-11-18)
+
+Reported by the user on OTE: the Download section showed a disabled "Download running…" button and
+nothing could stop the run or start a new one. Live state at 08:17Z: run
+`workflow_run_eb879f69-4c61-4ad4-9f97-97bbd63ef265` `retry_scheduled`, batch `paused` 203/492,
+recovery scheduled for 08:18:40Z. At 08:18:44Z the recovery attempt failed by itself ("Automatic
+recovery stopped: browser control changed during the cooldown."); the batch became `partial` and
+the page was usable again without any intervention. No live run was cancelled or started.
+
+Change: plugin dashboard only (REQ-017, AC-040 to AC-047 in PLANS.md). The user then asked for the
+fix to be committed, deployed to OTE and sent as a pull request; that is M5 (REQ-018).
+
+| Command (2026-11-18, after the audit 7 corrections) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 87 files passed, 1 skipped; 1155 tests passed, 9 skipped (`tests/zoer-download-stop.test.tsx`: 22 passed) |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` and `dist/zoer-native`; warning, not from this change: `"PdfPreview" is not exported by "../zoer/frontend/src/plugin-ui/controls.ts"` (imported at `procurement/NoticeView.tsx:240`) with the default sibling host checkout |
+
+Run with the default sibling host checkout `../zoer` (no `ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT`).
+Host follow-up, not part of this change: the catalog reconciliation leaves a `paused` batch
+unchanged after its run ends (`routes/plugin-catalog.ts` only corrects `running`).
+
+Process note: M4 was implemented before its plan addition and readiness were audited (AGENTS.md
+gates 1 and 2); audit 7 covered plan addition, completion and regression together.
+
+### Audit 7 — plan addition, M4 completion and regression — 2026-11-18 — FAIL
+
+| Finding | Summary | Correction |
+|---|---|---|
+| PG-M4-01 (blocking) | `batchPause` took a run missing from the dashboard's cached run list as ended. The cache is polled less often than the batch list, so a newly parked or update-paused batch could read "Stopped" with Retry, and the Download section could lack "Stop download", until the next poll; History Retry and Download selected did not reload the run list. | AC-046 and AC-047 added to PLANS.md and AC-040/AC-043 reworded. `batchPause` calls a missing run ended only when the list holds a run created after the batch's last write; `activeDownloadBatch` gives the section the stoppable batch from the batch list; `refreshAfterChange` reloads the run list after History Retry, Download selected, a per-file retry and both Stop controls, waiting out a refresh already in flight. |
+| PG-M4-02 (blocking) | AC-041 "nothing is downloading" and AC-040 `nextStepAt` precedence had no assertion. | The AC-041 test asserts the whole sentence; the AC-040 test gives the run and the batch a message with a different time. |
+
+Non-blocking items acted on: a refresh in flight could show the pre-cancel state after Stop
+(`refreshAfterChange`); Stop in History no longer waits for the workspace reload before the batch
+list reloads; the waiting line says "Nothing is running" for a batch that downloads nothing; a
+retry time that has passed is not shown; the plan revision is 6; the build warning is recorded.
+Carried forward, not changed: host cancel of a `retry_scheduled` run is evidenced by code reading
+only; keyboard focus is not moved when "Stop download" disappears; REQ-014's status text predates
+this work; the new test file is untracked until the user asks for a commit; version and deployment
+of the plugin are the user's decision.
+
+### Audit 8 — re-audit of plan addition, M4 completion and regression — 2026-11-18 — PASS
+
+PG-M4-01 and PG-M4-02 confirmed corrected; no blocking findings; AC-040 to AC-047 pass and REQ-017
+is VERIFIED. No regression on REQ-016 / AC-024. Non-blocking items carried forward:
+
+1. Known limit (in PLANS.md): a paused batch whose ended run has left the returned history keeps
+   its paused reading, with Stop offered, until any later run exists. "Download all" stays enabled.
+2. For at most one poll a parked batch known only from the batch list shows an enabled
+   "Download all" beside "Stop download"; the start is refused by the fresh check.
+3. If only a source capture blocks a new download while the waiting batch is unknown to the run
+   list, the disabled button reads "Download all", not "Download paused…".
+4. `procurement/Sources.tsx` and the notice views start downloads without `refreshAfterChange`;
+   no functional effect, because the section reads the batch list.
+5. Host cancel of a `retry_scheduled` run is evidenced by code reading only; keyboard focus is not
+   moved when "Stop download" disappears; double activation is guarded without a criterion.
+6. Not committed (the test file is untracked) and not deployed; plugin version and rollout are the
+   user's decision.
+
+### Audit 9 — pre-commit audit of the release delta — 2026-11-18 — FAIL (records only)
+
+Code, manifest and tests were found fit to commit.
+
+| Finding | Summary | Correction |
+|---|---|---|
+| PG-M4-03 | M4 was recorded VERIFIED while holding the unmet deployment criterion; a deployment record was claimed that did not exist. | Release, deployment and pull request are milestone M5 (REQ-018, IN PROGRESS); M4 is REQ-017 only; the claim is removed. |
+| PG-M4-04 | REQ-013 / AC-016 and their traceability row still named version 0.41.0. | Both annotated: 0.41.0 at its release, 0.41.1 since REQ-018 / AC-048 on the user's deployment request. |
+| PG-M4-05 | The pull request had no criterion or target; the package also carries upstream `61dd5fb` and `72fb23b`, unstated; no Home/Status check. | AC-050 added (to `main` of `amirrad98/files`, as pull request 1); M5 states what ships; AC-049 checks Home and Status, names the no-active-run check and what the record must hold. |
+
+| Command (2026-11-18, release delta, `ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` = `../zoer-ote-attachment-transfer`) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 87 files passed, 1 skipped; 1156 tests passed, 9 skipped |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` (manifest 0.41.1) and `dist/zoer-native`; same `PdfPreview` warning (an optional guarded lookup, also present in the live package's build) |
+
+### Audit 10 — re-audit of the pre-commit scope — 2026-11-18 — PASS
+
+PG-M4-03 to PG-M4-05 confirmed closed. The tree is fit for the M4 completion commit, which also
+carries the 0.41.1 version line and the M5 plan; M5 is ready to carry out and needs its own
+completion audit after the deployment record and the pull request exist. REQ-018 is IN PROGRESS
+until then.
+
+## M5 deployment record (2026-11-18)
+
+Procurement 0.41.1 went live on OTE at 09:18:07Z on 2026-11-18 (01:18 Vancouver).
+
+| Item | Value |
+|---|---|
+| Plugin commit | `c70d0d1887ec9bb54a6281680bb3e9009e2e0781` (clean tree; `source.json` records it, not dirty) |
+| Host UI checkout for the build | `../zoer-ote-attachment-transfer`, `1a84ff7a` (as for the live 0.41.0 package) |
+| Package | `dist/procurement-0.41.1.zip`, 7 files, 7,873,435 bytes, package digest `3046075f8ecdad9a8e160f6cd209360a9ca86348a9b83ba4eba4fa02cba3b829`, file SHA-256 `7f3264da05d0420026835e93c0510e6b463cc10c938a263bae3b475ed2fa8f5f`; host package conformance passed |
+| Difference from the 0.41.0 package | manifest: the version line only; `README.md` (the M4 paragraph) and `source.json` (the commit) differ; `native/style.css` identical; `worker/worker.js` differs only by the bundled model's added `workflowRuns` field; dashboard and native bundles carry M4 and upstream `61dd5fb` |
+| Staged record | `aca0ce3e-edfa-4d37-81c0-ae032979c035`, label "Procurement 0.41.1 stop paused downloads · c70d0d1", staged 08:50:52Z; the host reported the same digest |
+| Upgrade plan | 0.41.0 → 0.41.1, direction upgrade, no blockers, no added or removed permissions, network hosts or capabilities, no action changes, no review required; fingerprint `cb25731f0a257145477503a4a8a0cebbdcc619d7ca44b4cd1e545f3f1154c033` |
+| Live host at the time | commit `88a4a7ec9e9b0c3747e07aef1e424cbe450935cf` (dirty), newer than any local checkout |
+| Retained for rollback | package record `a7e0cf4d-e909-40f7-b14a-7d8ab2530fad` (0.41.0, digest `2284f6a5…f2777`, now `superseded`); `dist/procurement-0.41.0.zip` locally |
+
+Runs stopped for the upgrade (AC-049, check 2). The host refuses an upgrade while a run is active.
+
+- `awards.history` `workflow_run_5f48bb85-…` (scheduled, started 08:30:24Z) was running and
+  progressing (about one page every 30 seconds; range 140 of 147 completed at 09:02Z). The user was
+  told so and answered "Stop and deploy". Cancelled at 09:17:04Z; the host recorded
+  `outcome_unknown`. Its checkpoint is kept: version 2, 140 of 147 ranges complete, page 27,
+  57,879 → 58,285 rows processed, unchanged for 45 seconds after the stop and before the upgrade.
+  The daily schedule fires next at its retry time, 2026-11-19T09:17:28Z (the host does not fire
+  before `retryAt`), and a resume rechecks only the unfinished range.
+- `documents.download.missing` `workflow_run_9b94cbb9-…` (hourly schedule, created 09:08:27Z) was
+  `pending` behind the award run ("Waiting for another BC Bid job to finish") and had done no work.
+  It would have started the moment the award run released the browser and blocked the upgrade for
+  an unknown time, so it was cancelled first, at 09:17:03Z (`cancelled`). The user had been warned
+  that this scheduled download could prevent an idle window; stopping it was not named in the
+  user's instruction and was the implementer's decision. Its schedule fires next at its retry time,
+  10:17:28Z.
+
+Sequence: no active run from 09:17:15Z; the plan was read again and matched the reviewed
+fingerprint; upgrade applied 09:18:06Z ("0.41.0 -> 0.41.1; installed disabled"); plugin enabled
+09:18:07Z.
+
+Checks after the upgrade (AC-049):
+
+| Check | Result |
+|---|---|
+| `GET …/api/extensions/bc-bid-monitor` | version `0.41.1`, status `active`, enabled, no error, package digest `3046075f…b829` |
+| Configuration, permissions, network allowlist | identical to the copies read before the upgrade |
+| Schedules | 10 before and after with the same actions, intervals, enabled flags and browsers. Only the failure bookkeeping of the two stopped runs changed ("Stopped from plugin dashboard.": `awards.history` consecutive failures 7 → 8, `documents.download.missing` 0 → 1, each with a retry time) |
+| Live Documents page | loads the new native bundle (asset `9c63b2bc…47aa.js`, which contains "Stop download", "Waiting to retry" and "Download paused…"); the Download section shows an enabled "Download all" (3,297 links from 492 of 727 opportunities); History lists the earlier batches with their Retry buttons; no error alert on the Download tab |
+| Home and Status | both load with their headings and content, no error alert, no console error |
+
+Not verified live: stopping a download that waits for its automatic retry. No download was parked
+after the upgrade, so the new Stop controls were not exercised against the live host.
+
+Pull request: https://github.com/amirrad98/files/pull/2 (`feat/native-database-setup` → `main` of
+`amirrad98/files`), opened with the M4 commit; this record is pushed to the same branch.
+
+### Audit 11 — completion audit of M5 — 2026-11-18 — PASS
+
+AC-048, AC-049 (five checks) and AC-050 pass; REQ-018 is VERIFIED. The auditor confirmed by
+read-only requests that the installed package is byte-identical to the build from `c70d0d1`
+(tree digest recomputed locally), that 0.41.1 is active and enabled, that the 0.41.0 record is
+retained, and that both stopped runs and the schedule counters are as recorded. The page checks
+(Documents, Home, Status) rest on the implementer's browser observations, accepted because the
+criterion is manual. Non-blocking items carried forward:
+
+1. The Stop controls have not been exercised against the live host; no download was parked after
+   the upgrade.
+2. `awards.history` shows 8 consecutive failures (7 before the stop) and `scrape.full` 6, waiting
+   for a browser check; both conditions predate this release.
+3. Pull request 2 is open; merging it is the user's decision.
+4. Still open before a final project audit, unchanged by M4 and M5: the four host test failures,
+   the skipped RDN test, and M3 without a completion audit.
+
+## M7 — restart a paused download automatically (2026-11-18)
+
+Open item for the user's decision: restarts while no browser tab has the workspace open need a
+host change (the plugin worker cannot stop or start a run, and schedules fire hourly at the
+least). M7 does not provide them and does not close the question.
+
+To be told to the user when M7 is reported: the option runs only while the workspace is open in a
+browser tab; it is off until turned on; it turns itself off after 3 restarts in a row that saved
+no file.
+
+### Audit 12 — plan addition and readiness of M7 — 2026-11-18 — FAIL
+
+| Finding | Summary | Correction in PLANS.md |
+|---|---|---|
+| PG-M7-01 | "Paused" was only run status `retry_scheduled`, which the host also uses while a plugin upgrade interrupts a download and for all three download actions; behaviour with two active download runs was undefined. | A parked download is defined by action, run status, batch status and `batchPause`; AC-060 lists what is left alone; AC-062 covers other active download runs. |
+| PG-M7-02 | `researchRetry` resumes 50 notices or fewer as `documents.download`, which the host never parks again. | The resume request is always `documents.download.all` (AC-061). |
+| PG-M7-03 | Undefined: guard state and re-arm, failed reads, repeated cancel refusal, cancel of an already ended run, interleaving with manual controls, workspace closing mid-cycle, which pages, states never restarted, the catalog-wide measure. | AC-063 to AC-065 give each one outcome; the rest are known limits and README items (AC-067). |
+| PG-M7-04 | REQ-020 lacked its bounds; "also while the tab is hidden" overstated; unattended restarts were dismissed without a record. | Bounds are in the REQ-020 row; AC-065 says a cycle is not skipped because the tab is hidden and the README states what a browser may do; the open item above. |
+
+### Audit 13 — re-audit of the M7 plan and readiness — 2026-11-18 — PASS
+
+PG-M7-01 to PG-M7-04 confirmed closed; implementation may begin. Five wording items were applied
+to PLANS.md afterwards (who takes over the Web Lock, the two-browser limit, the README criterion
+covering the known limits, the paused-without-message case in AC-060, no cycle before the host
+has answered what it allows). Completion needs its own audit.
+
+### M7 implementation (2026-11-18)
+
+| Command (`ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` = `../zoer-ote-attachment-transfer`) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 88 files passed, 1 skipped; 1192 tests passed, 9 skipped (`tests/zoer-download-autoresume.test.tsx`: 28 passed). The run includes the other session's uncommitted M6 files. |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` and `dist/zoer-native`, both containing the option; the known `PdfPreview` warning |
+
+Live observation while M7 was written, read-only (not a test of M7, which is not deployed): the
+parked download kept being stopped and resumed from outside the plugin (35 runs since 10:05Z by
+16:08Z). The run started at 16:07:02Z was parked again at 16:08:22Z with the batch still at 220 of
+492, so recent restarts save little or nothing; the 3-restart guard exists for this case.
+
+### Audit 14 — completion audit of M7 — 2026-11-18 — FAIL
+
+The check itself (trigger, read order, second run-list reading, failure outcomes, guard) was found
+correct and the four commands passed. Three defects in the watcher and its wiring:
+
+| Finding | Summary | Correction |
+|---|---|---|
+| PG-M7-05 (high) | In the host's sandboxed dashboard frame Web Locks exist but refuse; the refusal was swallowed, so the option never ran and said another tab was handling it. | A lock request refused for any reason but this tab's own abort makes the tab check by itself (`lead`); AC-065.4 says "has Web Locks and allows them"; watcher and interface tests with a refusing lock and refusing storage. |
+| PG-M7-06 (medium) | A Stop pressed while a check was in flight cancelled the already stopped run and left the run the check had just started. Only the two Stop buttons were tested for going through the manual control. | `withManualDownloadControl` hands the control the awaited check's outcome; `stopDownloadRun` (both Stop buttons) also stops the run that check started; AC-065.6 says so. Tests: Stop download and History Stop during a restarting check end with no active run; Download all, History Retry, Download selected and a per-file retry are each shown to wait for a check in flight. |
+| PG-M7-07 (low) | Storage that reads but refuses to write turned the option off again at the next check. | A failed write or read makes the choice page-only and the tab stops following storage until a write succeeds; test with only `setItem` refusing. |
+
+Non-blocking items acted on: the AC-065.2 test runs the real `startWorkspace`; a check from before
+a turn-off or a close and reopen reports nothing and stops nothing once its reads return
+(`session`, `stillWanted`); the checkbox is disabled until the host has answered and is described
+by its sentence (`aria-describedby`); a test turns a tab off while its lock request is queued; the
+README notes that Retry in History resumes 50 notices or fewer as a selected-notice download.
+Left as they are: each check reads the full file statistics and the batch list (a read that times
+out makes that check `unreadable`, and the next one tries again); the paused lines say "This
+workspace restarts it" also when a check skips because another download is active.
+
+| Command after the corrections (`ZOER_UI_ROOT` / `ZOER_SOURCE_ROOT` = `../zoer-ote-attachment-transfer`) | Result |
+|---|---|
+| `npm run zoer:typecheck` | pass |
+| P1 `npm run zoer:test` | 88 files passed, 1 skipped; 1201 tests passed, 9 skipped (`tests/zoer-download-autoresume.test.tsx`: 37 passed) |
+| P2 `npm run zoer:test:catalog` | 38 pass, 0 fail |
+| P3 `npm run zoer:build` | built `dist/zoer-bcbid` and `dist/zoer-native` |
+
+### Audit 15 — completion re-audit of M7 — 2026-11-18 — PASS
+
+PG-M7-05 to PG-M7-07 confirmed closed; the auditor reverted each correction in scratch copies and
+the new tests failed every time. REQ-020 is VERIFIED by repository tests; the live
+cancel-then-resume is evidenced only by the external cycles observed on OTE. Non-blocking items
+carried forward:
+
+1. A Stop pressed in the moment between a completed automatic restart and the page's reload of
+   the run list names the run the check already stopped, so the new run continues; a second Stop
+   names the right one.
+2. No repository test for `stopDownloadRun` when the host does not name the new run (verified by
+   the auditor's probe).
+3. A stale check refused its start after its stop reports nothing; a restart made by a stale check
+   is not judged by the new guard.
+4. Open item for the user: restarts while no tab has the workspace open need a host change.
+
+## M8 — release 0.41.2 over a rollback of 0.42.0 (2026-11-18)
+
+Observed before the release: OTE runs 0.42.0 (record `173d9bd8-…`, installed 16:21:42Z by someone
+else; source not available). Its queue run `workflow_run_2e9e56bd-…` was cancelled at 17:04:46Z by
+an unknown actor; a scheduled `documents.download.missing` run (`workflow_run_da1cc93f-…`) started
+at 17:05:00Z. The 0.41.2 package was staged at 17:07:51Z, before the readiness audit (staging does
+not activate anything): record `0a37a88e-269d-4804-8af7-7bd8e5eb8695`, package digest
+`1bfeb5d8b8023d2c00200521bab565e58b3f666b9cbf3ecebdebca54c224da95`, file SHA-256
+`3b033cc6f58a76a7cba1a132499bd7510b013da0cccbc4fc8ec0efd63100835a`, built from `6b74190` in a clean
+copy (dirty false).
+
+### Audit 16 — plan addition and readiness of M8 — 2026-11-18 — FAIL (docs only)
+
+| Finding | Correction |
+|---|---|
+| PG-M8-01: AC-069.1 did not list the exact rollback plan (second removed capability, required review). | AC-069.1 lists every field; the review is the user's decision. |
+| PG-M8-02: no rule for an active run, nor for schedules firing between the two applies. | AC-069.3: active runs are stopped and recorded; runs re-read before each apply; back-to-back applies. |
+| PG-M8-03: "unchanged" had no baseline. | AC-069.0 saves the baseline; AC-069.4 lists the fields allowed to differ. |
+
+### M8 deployment record (2026-11-18)
+
+Procurement 0.41.2 went live on OTE at 17:20:21Z (10:20 Vancouver).
+
+| Item | Value |
+|---|---|
+| Commit | `6b7419093e61d24c9b0658bc242703516d20f7e0` (M7 `02b6c05` plus the version line), built in a clean copy, `source.json` dirty false, UI source `1a84ff7a` |
+| Package | `dist/procurement-0.41.2.zip`, 7 files, digest `1bfeb5d8b8023d2c00200521bab565e58b3f666b9cbf3ecebdebca54c224da95`, file SHA-256 `3b033cc6f58a76a7cba1a132499bd7510b013da0cccbc4fc8ec0efd63100835a`; host package conformance passed |
+| Staged | record `0a37a88e-269d-4804-8af7-7bd8e5eb8695` at 17:07:51Z, same digest |
+| Live host | commit `88a4a7ec9e9b0c3747e07aef1e424cbe450935cf` (dirty) |
+
+Sequence (AC-069):
+
+0. Baseline of the extension and the schedules saved at 17:12:01Z.
+1. Run stopped (AC-069.3): `workflow_run_da1cc93f-411c-4b7c-a2aa-436cbd7edf87`,
+   `documents.download.missing` (hourly "Keep documents current"), running since 17:05:00Z with
+   7 of 500 notices done at 17:06Z; cancelled 17:12:05Z, host status `outcome_unknown`. Saved files
+   are kept.
+2. Rollback 0.42.0 → 0.41.1 applied 17:12:13Z with the plan of AC-069.1 matched field for field
+   (fingerprint `0549a262…8348`). The rolled-back plugin is installed disabled, so its workspace
+   and run list answered 404 from 17:12:14Z to 17:20:05Z; the waiting script timed out on that.
+   Deviation from AC-069.3: the run read required just before the upgrade was not possible, and the
+   upgrade came 8 minutes after the rollback, not back to back. Evidence that no run was active:
+   the plugin was disabled for that whole interval, and the run list read later has no run created
+   between 17:12:03Z (the stopped run) and 17:23:19Z (a scheduled `documents.extract.pending` run
+   after the release). The upgrade was applied by hand at 17:20:20Z. (That the host refuses an
+   upgrade while a run is active is stated in the 0.41.0 runbook,
+   `zoer/docs/2026-11-16-deferred-extraction-deploy.md`; it was not observed in this release.)
+3. Upgrade 0.41.1 → 0.41.2: plan with no blockers and no added or removed permissions, hosts,
+   capabilities or action changes, no review required (fingerprint `5036c0a9…00de`); applied
+   17:20:20Z. No run active afterwards (17:20:22Z).
+4. Enable: the upgrade installs the plugin disabled; it was enabled by hand at 17:20:21Z, which
+   restores the baseline `enabled: true`.
+
+Checks after the release:
+
+| Check | Result |
+|---|---|
+| Extension | `0.41.2`, active, enabled, no error, digest `1bfeb5d8…da95` |
+| Configuration, permissions | equal to the baseline |
+| Schedules | 11 before and after, same actions and browsers; only `documents.download.missing` differs, in `checkedRunId`, `consecutiveFailures`, `lastStatus`, `retryAt` and `state` (the stopped run), all allowed by AC-069.4 |
+| Documents page | "Download all attachments" with Download all enabled; the checkbox "Restart automatically when paused" present, enabled, unchecked, described by "Works while this workspace is open in a browser tab."; no alert |
+| Home, Status | load with their headings, no alert; one 404 console line from the period the plugin was disabled |
+| Retained records | 0.42.0 `173d9bd8-4680-4e22-9d66-199225bbeb7c` (digest `e2172766…`) `superseded`, "Rolled back to 0.41.1": 0.42.0 can be restored as an upgrade from 0.41.2. 0.41.1 `aca0ce3e-edfa-4d37-81c0-ae032979c035` `superseded` by 0.41.2 |
+
+Removed with 0.42.0 by the user's decision: the `documents.download.queue` action and its dashboard;
+its host handlers remain unused. Not verified live: an automatic restart itself (no download was
+parked after the release, and the option is off until a user ticks it).
+
+### Audit 18 — completion audit of M8 — 2026-11-18 — FAIL (record only)
+
+| Finding | Correction |
+|---|---|
+| PG-M8-04: the record did not say that the run read before the upgrade was skipped, that the applies were 8 minutes apart, or what evidence replaces the read. | Step 2 of the deployment record states the deviation and the evidence; the enable is its own step. |
+
+Noted: `documents.extract.pending` ran normally at 17:23:19Z after the release, so its schedule
+now differs from the 17:20 after-copy as a schedule does after any run.
+
+### Audit 19 — completion re-audit of M8 — 2026-11-18 — PASS
+
+PG-M8-04 resolved; REQ-021 is VERIFIED. An automatic restart itself has not yet been seen on OTE.

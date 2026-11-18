@@ -6,38 +6,56 @@ import { host } from './bridge';
 import { Hint } from './host-ui';
 import { useDocumentBrowsers } from './use-document-browsers';
 import { documentScope, readDocumentCandidates, type DocumentCandidate } from './document-scope';
-import { refresh, useWorkspace } from './backend';
+import { refresh, refreshAfterChange, useWorkspace } from './backend';
 import { navigatePlugin } from './navigation';
-import { assertDocumentBrowserIdle, sourceCaptureProgressPath } from './document-run';
+import { setAutoResume, stopDownloadRun, useAutoResume, withManualDownloadControl } from './download-autoresume';
+import { useCapabilities, useCapabilitiesReady } from './capabilities';
+import { activeDocumentDownload, assertDocumentBrowserIdle, retryTimeText, sourceCaptureProgressPath, type ActiveDownload } from './document-run';
 
-export function BulkDocuments({running,onStarted}:{running:boolean;onStarted:()=>Promise<void>}) {
+export function BulkDocuments({running,activeBatch,onStarted}:{running:boolean;/** The running or paused download batch, known before the run list catches up. */activeBatch?:ActiveDownload|null;onStarted:()=>Promise<void>}) {
   const {model}=useWorkspace();
   const [submitted,setSubmitted]=useState<string>();
   const { capturing: sourceRunning, downloading, separate, downloadBlocked, captureBlocked } = useDocumentBrowsers(submitted);
   const downloadRunning = running || downloading;
+  // The run that blocks a new download. It can be stopped here, also while it only waits for an automatic retry.
+  const active = activeDocumentDownload(model?.documentRuns) ?? activeBatch ?? null;
   const [scope,setScope]=useState<'current'|'all'>('current');
   const client=useQueryClient(), queryKey=['procurement','document-candidates',scope,sourceRunning];
   const candidates=useQuery({queryKey,enabled:!!model,queryFn:()=>readDocumentCandidates(host,scope,sourceRunning),refetchInterval:sourceRunning?30000:false});
   const records=candidates.data,loading=candidates.isPending;
   const setRecords=(records:DocumentCandidate[])=>client.setQueryData(queryKey,records);
-  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
+  const [busy,setBusy]=useState(false),[stopping,setStopping]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const pending=useRef(false);
+  const auto=useAutoResume(), {collection}=useCapabilities(), hostAnswered=useCapabilitiesReady();
   const load=async()=>{setError('');try{await candidates.refetch({throwOnError:true});}catch(e){setError((e as Error).message);}};
   const preview=records?documentScope(records,scope):null;
   const start=async()=>{
     if(pending.current)return;pending.current=true;setBusy(true);setError('');setMessage('');
     try {
-      await assertDocumentBrowserIdle(host);
-      // Refresh the full snapshot at the click; never submit only the visible table page.
-      const fresh=await readDocumentCandidates(host,scope,sourceRunning);setRecords(fresh);
-      const selected=documentScope(fresh,scope);
-      if(!selected.ids.length)throw new Error('No saved attachment links in this scope. Capture opportunity details in Scraper first.');
-      const result=await host('action',{actionId:'documents.download.all',input:{recordIds:selected.ids,force:false}});
+      const result=await withManualDownloadControl(async()=>{
+        await assertDocumentBrowserIdle(host);
+        // Refresh the full snapshot at the click; never submit only the visible table page.
+        const fresh=await readDocumentCandidates(host,scope,sourceRunning);setRecords(fresh);
+        const selected=documentScope(fresh,scope);
+        if(!selected.ids.length)throw new Error('No saved attachment links in this scope. Capture opportunity details in Scraper first.');
+        return {...await host('action',{actionId:'documents.download.all',input:{recordIds:selected.ids,force:false}}),ids:selected.ids};
+      });
+      const selected={ids:result.ids as string[]};
       setSubmitted(result.run.id);
       setMessage(`Download started for ${selected.ids.length.toLocaleString()} ${selected.ids.length === 1 ? 'opportunity' : 'opportunities'}. You can leave this page.`);
       await onStarted();
       await refresh();
     }catch(e){setError((e as Error).message);}finally{pending.current=false;setBusy(false);}
+  };
+  const stop=async()=>{
+    if(pending.current||!active)return;pending.current=true;setStopping(true);setError('');setMessage('');
+    try {
+      await stopDownloadRun(active.id);
+      setSubmitted(undefined);
+      setMessage('Download stopped. Saved files are kept; start a new download or use Retry in History.');
+      await onStarted();
+      await refreshAfterChange();
+    }catch(e){setError((e as Error).message);}finally{pending.current=false;setStopping(false);}
   };
   const captureDetails=async()=>{
     if(pending.current)return;pending.current=true;setBusy(true);setError('');setMessage('');
@@ -55,16 +73,21 @@ export function BulkDocuments({running,onStarted}:{running:boolean;onStarted:()=
   return <section className="zoer-history doc-download" aria-label="Download all attachments">
     <h2>Download all attachments</h2>
     <div className="research-toolbar research-stack">
-      <label className="research-label"><span className="sr-only">Scope</span><Select aria-label="Download scope" value={scope} onChange={e=>setScope(e.target.value as 'current'|'all')} disabled={busy}><option value="current">Open opportunities</option><option value="all">All opportunities</option></Select></label>
-      <Hint action content="Up to 100 files per opportunity, 150 MB each. Files already saved are reused."><Button disabled={loading||busy||running||downloadBlocked||!preview?.ids.length} onClick={()=>void start()}>{busy?'Starting…':downloadRunning?'Download running…':'Download all'}</Button></Hint>
-      <Button variant="ghost" disabled={loading||busy} onClick={()=>void load()}>Refresh</Button>
+      <label className="research-label"><span className="sr-only">Scope</span><Select aria-label="Download scope" value={scope} onChange={e=>setScope(e.target.value as 'current'|'all')} disabled={busy||stopping}><option value="current">Open opportunities</option><option value="all">All opportunities</option></Select></label>
+      <Hint action content="Up to 100 files per opportunity, 150 MB each. Files already saved are reused."><Button disabled={loading||busy||stopping||running||downloadBlocked||!preview?.ids.length} onClick={()=>void start()}>{busy?'Starting…':!downloadRunning?'Download all':active?.waiting?'Download paused…':'Download running…'}</Button></Hint>
+      {active&&<Button variant="ghost" disabled={busy||stopping} onClick={()=>void stop()}>{stopping?'Stopping…':'Stop download'}</Button>}
+      <Button variant="ghost" disabled={loading||busy||stopping} onClick={()=>void load()}>Refresh</Button>
     </div>
     {loading?<p role="status">Counting attachments…</p>:preview&&<p>
       <strong>{preview.links.toLocaleString()} attachment links</strong> from {preview.ids.length.toLocaleString()} of {preview.total.toLocaleString()} opportunities.
       {!!preview.capturedWithoutLinks&&<> {preview.capturedWithoutLinks.toLocaleString()} have captured details with no saved attachment links.</>}
-      {!!preview.missingDetails.length&&<> {preview.missingDetails.length.toLocaleString()} still need details. <button type="button" className="research-link" disabled={busy||running||captureBlocked} onClick={()=>void captureDetails()}>Capture missing details</button></>}
+      {!!preview.missingDetails.length&&<> {preview.missingDetails.length.toLocaleString()} still need details. <button type="button" className="research-link" disabled={busy||stopping||running||captureBlocked} onClick={()=>void captureDetails()}>Capture missing details</button></>}
     </p>}
     {sourceRunning&&<p role="status">{separate ? 'A source capture is active. Downloads use a separate browser. Refresh to include newly captured links.' : 'A source capture is active or paused. A separate download browser is needed to download at the same time.'} <button type="button" className="research-link" onClick={()=>navigatePlugin(sourceCaptureProgressPath(model?.captureRuns))}>View progress</button></p>}
+    {collection&&<p className="research-note"><label className="research-check"><input type="checkbox" aria-describedby="auto-restart-where" checked={auto.on} disabled={!hostAnswered} onChange={e=>setAutoResume(e.target.checked)} /> Restart automatically when paused</label> <span id="auto-restart-where">Works while this workspace is open in a browser tab.</span></p>}
+    {auto.on&&<p role="status">{auto.leader?`Automatic restart is on. ${auto.restarts?`${auto.restarts.toLocaleString()} automatic ${auto.restarts===1?'restart':'restarts'}, the last at ${new Date(auto.lastAt!).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}.`:'No automatic restart yet.'}`:'Automatic restart is on. Another tab of this browser is handling it.'}{auto.note&&` ${auto.note}`}</p>}
+    {!auto.on&&auto.stopped&&<p role="alert">{auto.stopped}</p>}
+    {active?.waiting&&<p role="status">{auto.on?'The download is paused and nothing is transferring. This workspace restarts it automatically within about 30 seconds.':<>The download is paused and nothing is transferring. Zoer retries automatically{retryTimeText(active.retryAt)&&` at ${retryTimeText(active.retryAt)}`}. Stop it to start a new download now; saved files are kept.</>}</p>}
     {message&&<p role="status">{message}</p>}{(error||candidates.error)&&<p role="alert">{error||(candidates.error as Error).message}</p>}
   </section>;
 }
