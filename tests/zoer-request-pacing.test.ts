@@ -8,11 +8,20 @@ function clock() {
 }
 
 describe('BC Bid capture pacing', () => {
-  it('defaults to 30 seconds and spaces details after slow pages finish', async () => {
+  it('adds no extra spacing by default, leaving Zoer\'s shared random host gap', async () => {
     const time = clock(), starts: number[] = [];
     const pace = createRequestPacing(time);
     const capture = async () => { starts.push(time.now()); time.advance(7000); return 'saved'; };
     expect(await pace(url, capture)).toBe('saved');
+    await pace(url, capture);
+    expect(starts).toEqual([0, 7000]);
+  });
+
+  it('a saved fixed delay still spaces details after slow pages finish', async () => {
+    const time = clock(), starts: number[] = [];
+    const pace = createRequestPacing({ ...time, config: { [REQUEST_DELAY_SETTING]: 30 } });
+    const capture = async () => { starts.push(time.now()); time.advance(7000); return 'saved'; };
+    await pace(url, capture);
     await pace(url, capture);
     expect(starts).toEqual([0, 37000]);
   });
@@ -28,14 +37,14 @@ describe('BC Bid capture pacing', () => {
 
   it('spaces a failed attempt before a retry and keeps the original error', async () => {
     const time = clock(), failure = new Error('Source transfer failed');
-    const pace = createRequestPacing(time);
+    const pace = createRequestPacing({ ...time, config: { [REQUEST_DELAY_SETTING]: 30 } });
     await expect(pace(url, async () => { throw failure; })).rejects.toBe(failure);
     await pace(url, async () => {});
     expect(time.now()).toBe(30000);
   });
 
   it('leaves other portals and non-capture operations alone', async () => {
-    const time = clock(), pace = createRequestPacing(time);
+    const time = clock(), pace = createRequestPacing({ ...time, config: { [REQUEST_DELAY_SETTING]: 30 } });
     await pace(url, async () => {});
     await pace('https://example.com/bids', async () => {});
     expect(time.now()).toBe(0);
@@ -43,7 +52,7 @@ describe('BC Bid capture pacing', () => {
 
   it('stops a maintenance pause during the wait before any new source request', async () => {
     const time = clock(); let paused = false, captures = 0;
-    const pace = createRequestPacing({ ...time, paused: () => paused, sleep: async ms => { await time.sleep(ms); paused = true; } });
+    const pace = createRequestPacing({ ...time, config: { [REQUEST_DELAY_SETTING]: 30 }, paused: () => paused, sleep: async ms => { await time.sleep(ms); paused = true; } });
     const capture = async () => { captures++; };
     await pace(url, capture);
     await expect(pace(url, capture)).rejects.toMatchObject({ code: 'ZOER_PAUSED' });
@@ -52,13 +61,14 @@ describe('BC Bid capture pacing', () => {
   });
 
   it('rejects invalid saved values before loading BC Bid', async () => {
-    for (const value of [0, 9, 301, 30.5, NaN, Infinity, '30', false]) {
+    for (const value of [-1, 1, 9, 301, 30.5, NaN, Infinity, '30', false]) {
       let loaded = false;
       const pace = createRequestPacing({ config: { [REQUEST_DELAY_SETTING]: value } });
-      await expect(pace(url, async () => { loaded = true; })).rejects.toThrow('whole number from 10 to 300');
+      await expect(pace(url, async () => { loaded = true; })).rejects.toThrow('0 or a whole number from 10 to 300');
       expect(loaded).toBe(false);
     }
-    expect(requestDelaySeconds()).toBe(30);
+    expect(requestDelaySeconds()).toBe(0);
+    expect(requestDelaySeconds({ [REQUEST_DELAY_SETTING]: 0 })).toBe(0);
     expect(requestDelaySeconds({ [REQUEST_DELAY_SETTING]: 10 })).toBe(10);
     expect(requestDelaySeconds({ [REQUEST_DELAY_SETTING]: 300 })).toBe(300);
   });

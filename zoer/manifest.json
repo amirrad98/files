@@ -1,7 +1,7 @@
 {
   "id": "bc-bid-monitor",
   "name": "Procurement",
-  "version": "0.44.7",
+  "version": "0.44.8",
   "description": "Multi-source procurement catalog: BC Bid, CanadaBuys, bids&tenders (25 BC public buyers) and 12 BC local-government websites, each collected on its own schedule as a resumable job under Zoer's crawl policy (robots.txt, AI-crawler rules, pacing), plus 7 BC sites that block automated requests, collected in your Zoer browser, with BC place tags, saved searches and alerts (place, exclude words, hidden notices), pursuits and source-aware analysis.",
   "type": "integration",
   "integration": {
@@ -2860,7 +2860,8 @@
           "minDelaySeconds": 0
         },
         "bcbid.gov.bc.ca": {
-          "minDelaySeconds": 10
+          "minDelaySeconds": 4,
+          "maxDelaySeconds": 16
         }
       }
     }
@@ -2874,9 +2875,9 @@
     },
     "bc_bid_request_delay_seconds": {
       "type": "number",
-      "description": "Whole seconds between BC Bid page requests, from 10 to 300. Default: 30. Applies to new and resumed captures; longer source-required waits still apply. Attachment downloads have separate 30-second pacing.",
+      "description": "Extra whole seconds between BC Bid page requests: 0, or 10 to 300. Default: 0, which leaves only Zoer's shared BC Bid gap, a fresh random 4 to 16 seconds before each request. Applies to new and resumed captures; longer source-required waits still apply. Attachment downloads also wait a random 4 to 16 seconds.",
       "required": false,
-      "default": 30
+      "default": 0
     },
     "browser_session_id": {
       "type": "string",
