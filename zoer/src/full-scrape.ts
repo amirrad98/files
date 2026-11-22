@@ -55,8 +55,16 @@ const compactOrNull = (state: Checkpoint) => { try { return compactCheckpoint(st
 export const listingFingerprint = (records: { sourceKey: string }[]) => createHash('sha256').update(records.map(row => row.sourceKey).join('|')).digest('hex').slice(0, 16);
 /** Re-reads of a page whose pager advanced before its rows, before the crawl stops without saving that page. */
 const STALE_PAGE_RECHECKS = 2;
+/**
+ * How often a running full scrape saves its whole checkpoint between pages. Every saved document goes
+ * through the worker's output, which Zoer caps at 64 MiB for the run; on OTE on 2026-11-21 saving the
+ * full checkpoint after every listing page and every 10 details used that up in about an hour. Listing
+ * pages and details are still saved as they are captured, so a crash repeats at most this much work.
+ */
+export const CHECKPOINT_EVERY_MS = 3 * 60_000;
+
 /** Immutable listing/detail deltas keep data durable; compact checkpoints resume without re-fetching completed details. */
-export async function scrapeFull(browser: { captureUrl(url: string, pageNumber?: number): Promise<PageCapture> }, save: (document: any) => Promise<string>, resume?: unknown, options: { runId?: string } = {}) {
+export async function scrapeFull(browser: { captureUrl(url: string, pageNumber?: number): Promise<PageCapture> }, save: (document: any) => Promise<string>, resume?: unknown, options: { runId?: string; checkpointEveryMs?: number; clock?: () => number } = {}) {
   const now = () => new Date().toISOString();
   const state: Checkpoint = resume ? validateCheckpoint(expandCheckpoint(resume)) : { version: 1, kind: 'scrape', scope: 'all-current-public-opportunities', limited: false,
     capturedAt: now(), startedAt: now(), phase: 'listing', currentPage: 0, totalPages: null, listingCount: 0, detailsCompleted: 0,
@@ -69,10 +77,15 @@ export async function scrapeFull(browser: { captureUrl(url: string, pageNumber?:
   const listing = state.listing;
   const firstSeen = listing && state.phase === 'listing' ? firstPositions(listing, state.knownKeys) : new Map<string, Position>();
   let artifactId = '';
-  const checkpoint = async () => {
+  const clock = options.clock ?? Date.now, checkpointEveryMs = options.checkpointEveryMs ?? CHECKPOINT_EVERY_MS;
+  let lastCheckpointAt = -Infinity;
+  /** Saves the whole checkpoint; between pages (`force` false) at most every `checkpointEveryMs`. */
+  const checkpoint = async (force = true) => {
+    if (!force && clock() - lastCheckpointAt < checkpointEveryMs) return;
     state.capturedAt = now(); state.listingCount = known.size;
     state.reconciliation = reconcileListing(state.listing ?? null, known.size, state.phase !== 'listing');
     artifactId = await save(state);
+    lastCheckpointAt = clock();
   };
   const capture = async (url: string, pageNumber?: number) => {
     let failure: unknown;
@@ -138,7 +151,8 @@ export async function scrapeFull(browser: { captureUrl(url: string, pageNumber?:
       }
       state.currentPage = number;
       if (!page.pagination!.hasNext) { state.totalPages = number; state.phase = 'detail'; }
-      await checkpoint();
+      // The end of the listing is always saved; other pages at most every few minutes.
+      await checkpoint(state.phase === 'detail');
     }
     const work = [...state.pending];
     for (const row of work) {
@@ -157,7 +171,8 @@ export async function scrapeFull(browser: { captureUrl(url: string, pageNumber?:
         state.failures.push({ sourceKey: row.sourceKey, message });
         if (/manual|browser check|cancel|unavailable|budget|invalid.ticket/i.test(message)) throw error;
       }
-      if (state.detailsCompleted % 10 === 0 || state.failures.length > failuresBefore) await checkpoint();
+      if (state.failures.length > failuresBefore) await checkpoint();
+      else if (state.detailsCompleted % 10 === 0) await checkpoint(false);
       if (state.failures.length >= 5) throw new Error('Five detail pages failed. Saved progress; resume after checking the browser.');
     }
     if (state.pending.length) throw new Error(`${state.pending.length} detail pages remain incomplete. Resume to retry them.`);

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { compactCheckpoint, scrapeFull, validateCheckpoint } from '../zoer/src/full-scrape';
+import { CHECKPOINT_EVERY_MS, compactCheckpoint, scrapeFull, validateCheckpoint } from '../zoer/src/full-scrape';
 import { reconciliationSummary } from '../zoer/src/listing-reconciliation';
 import { LISTING_URL } from '../zoer/src/scrape';
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -19,6 +19,27 @@ describe('full current public crawl', () => {
     expect(result).toMatchObject({ totalPages: 9, listingCount: 18, detailCount: 18, limited: false });
     expect(saved.filter(doc => doc.kind === 'detail')).toHaveLength(18);
     expect(saved.at(-1)).toMatchObject({ complete: true, pending: [], failures: [] });
+  });
+  it('saves the whole checkpoint at most every few minutes between pages, and always at the end', async () => {
+    // On OTE on 2026-11-21 a checkpoint after every page and every 10 details used up the run's 64 MiB of
+    // worker output in about an hour. Listings and details are still saved as they are captured.
+    expect(CHECKPOINT_EVERY_MS).toBe(3 * 60_000);
+    const count = async (stepMs: number) => {
+      const saved: any[] = [];
+      let at = 0;
+      const result = await scrapeFull({ captureUrl: async (url, number) => { at += stepMs; return url === LISTING_URL ? listing(number!) : detail(url); } },
+        async doc => { saved.push(structuredClone(doc)); return String(saved.length); }, undefined, { clock: () => at });
+      return { result, scrape: saved.filter(doc => doc.kind === 'scrape'), details: saved.filter(doc => doc.kind === 'detail').length };
+    };
+    // A fast scrape: the start, the end of the listing and the finish, and nothing in between.
+    const fast = await count(1000);
+    expect(fast.result).toMatchObject({ totalPages: 9, listingCount: 18, detailCount: 18 });
+    expect(fast.details).toBe(18);
+    expect(fast.scrape).toHaveLength(3);
+    expect(fast.scrape.at(-1)).toMatchObject({ complete: true, pending: [] });
+    // A slow scrape still checkpoints as it goes, once the interval has passed.
+    const slow = await count(CHECKPOINT_EVERY_MS);
+    expect(slow.scrape.length).toBeGreaterThan(fast.scrape.length);
   });
   it('stops repeated pagination without claiming completeness and saves a checkpoint', async () => {
     const saved: any[] = [];

@@ -282,6 +282,8 @@ Exclusions live in the analysis URL and recalculate totals, rankings and matchin
 
 **0.44.6** stops showing stale browser-check waits on Status. A notice counts as waiting for a browser check only when the check came after the last saved attachment; once a file has been saved since, earlier checks are retries due, which **Keep documents current** runs, and their files count as failed instead of waiting for you. A check that stopped the download browser on any notice, including a closed one, still shows the card with its time.
 
+Version 0.44.9 saves the full scrape's whole checkpoint at most every 3 minutes between pages, and always at the end of the listing, at the finish and on any stop. Every saved document counts toward the worker's 64 MiB output for the run. Saving after every page and every 10 details used that up in about an hour, so the full scrape failed with "exceeded its output limit" every time.
+
 Version 0.44.8 spaces BC Bid requests by a fresh random 4 to 16 seconds through Zoer's shared host gap (`maxDelaySeconds`, which needs a Zoer host that supports it) and no longer adds a fixed 30-second page delay by default.
 
 Version 0.44.7 counts incomplete and stale detail captures even when a BC Bid notice already has attachment links. Browser-check status uses actual BC Bid attachment transfers for the selected download profile. Portal downloads and text extraction do not clear it.
